@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 
 set -e
+
+unalias rm 2>/dev/null || true
+unset -f rm 2>/dev/null || true
+
 trap 'echo "An error occurred. Exiting..." >&2; exit 1' ERR
 
 VERSION="1.1.0"
@@ -86,7 +90,8 @@ clean_directory() {
                 fi
             fi
 
-            find_cmd+=" -exec rm -rf {} \\; 2>/dev/null || true"
+            find_cmd+=" -exec /bin/rm -rf {} \; 2>/dev/null || true"
+
             eval "$find_cmd"
 
             local after_size=$(du -sh "$dir" 2>/dev/null | cut -f1)
@@ -273,6 +278,14 @@ perform_cleanup() {
 
 update_system() {
     log_message "Starting APT operations"
+
+    tries=0
+    while ! apt-get update -y; do
+        ((tries++))
+        [[ $tries -ge 5 ]] && error_message "APT locked too long. Aborting." && return 1
+        echo "APT locked, waiting..."
+        sleep 5
+    done
 
     if ! check_command apt-get; then
         error_message "apt-get not found. Cannot perform system update."
