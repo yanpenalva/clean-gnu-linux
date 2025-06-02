@@ -235,6 +235,26 @@ perform_package_cleanup() {
 perform_cleanup() {
     log_message "Starting filesystem cleanup"
 
+    clean_directory "/home/*/.cache/thumbnails" 0
+    clean_directory "/root/.cache/pip" 30
+    clean_directory "/root/.npm" 30
+    clean_directory "/root/.composer/cache" 30
+    for user_home in /home/*; do
+        clean_directory "$user_home/.cache/pip" 30
+        clean_directory "$user_home/.npm" 30
+        clean_directory "$user_home/.composer/cache" 30
+    done
+
+    echo "Removing orphaned packages..."
+    if ! check_command deborphan; then
+        echo "Installing deborphan..."
+        apt-get update -qq && apt install -y deborphan
+    fi
+    deborphan | xargs -r apt-get -y remove --purge
+
+    echo "Find and delete temporary files..."
+    find /home /tmp /var /root -type f \( -name "*.bak" -o -name "*.old" -o -name "*.tmp" -o -name "core.*" \) -print
+
     declare -A dirs_retention
     dirs_retention=(
         ["/var/cache/apt/archives"]=0
