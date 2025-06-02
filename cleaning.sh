@@ -115,7 +115,7 @@ check_command() {
             echo "Dry-run: Would install $1"
         else
             echo "Installing $1..."
-            apt-get update -qq && apt-get install -y "$1"
+            apt update -qq && apt install -y "$1"
             if command -v "$1" >/dev/null 2>&1; then
                 echo "$1 installed successfully."
                 return 0
@@ -185,9 +185,9 @@ perform_package_cleanup() {
         else
             echo "Cleaning package caches..."
             if [[ $VERBOSE -eq 1 ]]; then
-                apt-get clean -y
+                apt clean -y
             else
-                apt-get clean -y &
+                apt clean -y &
                 show_spinner $!
             fi
         fi
@@ -248,9 +248,9 @@ perform_cleanup() {
     echo "Removing orphaned packages..."
     if ! check_command deborphan; then
         echo "Installing deborphan..."
-        apt-get update -qq && apt install -y deborphan
+        apt update -qq && apt install -y deborphan
     fi
-    deborphan | xargs -r apt-get -y remove --purge
+    deborphan | xargs -r apt -y remove --purge
 
     echo "Find and delete temporary files..."
     find /home /tmp /var /root -type f \( -name "*.bak" -o -name "*.old" -o -name "*.tmp" -o -name "core.*" \) -print
@@ -300,7 +300,7 @@ update_system() {
     log_message "Starting APT operations"
 
     tries=0
-    while ! apt-get update -y; do
+    while ! apt update -y; do
         ((tries++))
         [[ $tries -ge 5 ]] && error_message "APT locked too long. Aborting." && return 1
         echo "APT locked, waiting..."
@@ -308,7 +308,7 @@ update_system() {
     done
 
     if ! check_command apt-get; then
-        error_message "apt-get not found. Cannot perform system update."
+        error_message "aptnot found. Cannot perform system update."
         return 1
     fi
 
@@ -317,41 +317,41 @@ update_system() {
     else
         echo 'Updating package lists...'
         if [[ $VERBOSE -eq 1 ]]; then
-            apt-get update -y
+            apt update -y
         else
-            apt-get update -y &
+            apt update -y &
             show_spinner $!
         fi
 
         echo 'Upgrading packages...'
         if [[ $VERBOSE -eq 1 ]]; then
-            apt-get upgrade -y
+            apt upgrade -y
         else
-            apt-get upgrade -y &
+            apt upgrade -y &
             show_spinner $!
         fi
 
         echo 'Performing full upgrade...'
         if [[ $VERBOSE -eq 1 ]]; then
-            apt-get full-upgrade -y
+            apt full-upgrade -y
         else
-            apt-get full-upgrade -y &
+            apt full-upgrade -y &
             show_spinner $!
         fi
 
         echo 'Removing unused packages...'
         if [[ $VERBOSE -eq 1 ]]; then
-            apt-get autoremove --purge -y
+            apt autoremove --purge -y
         else
-            apt-get autoremove --purge -y &
+            apt autoremove --purge -y &
             show_spinner $!
         fi
 
         echo 'Cleaning APT cache...'
         if [[ $VERBOSE -eq 1 ]]; then
-            apt-get autoclean
+            apt autoclean
         else
-            apt-get autoclean &
+            apt autoclean &
             show_spinner $!
         fi
     fi
@@ -411,17 +411,17 @@ clean_old_kernels() {
                 for kernel in $installed_kernels; do
                     echo "Removing old kernel: $kernel"
                     if [[ $VERBOSE -eq 1 ]]; then
-                        apt-get purge -y "$kernel"
+                        apt purge -y "$kernel"
                     else
-                        apt-get purge -y "$kernel" &>/dev/null &
+                        apt purge -y "$kernel" &>/dev/null &
                         show_spinner $!
                     fi
                 done
 
                 if [[ $VERBOSE -eq 1 ]]; then
-                    apt-get autoremove -y
+                    apt autoremove -y
                 else
-                    apt-get autoremove -y &>/dev/null &
+                    apt autoremove -y &>/dev/null &
                     show_spinner $!
                 fi
             else
@@ -536,7 +536,7 @@ clean_browser_cache() {
 #             echo "To remove duplicates automatically, install fdupes and run: fdupes -r -d -N /home"
 #         fi
 #     else
-#         log_message "fdupes not found. Install it with 'apt-get install fdupes' to find duplicate files."
+#         log_message "fdupes not found. Install it with 'apt install fdupes' to find duplicate files."
 #     fi
 # }
 
