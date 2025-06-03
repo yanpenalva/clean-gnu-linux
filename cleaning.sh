@@ -252,9 +252,6 @@ perform_cleanup() {
     fi
     deborphan | xargs -r apt -y remove --purge
 
-    echo "Find and delete temporary files..."
-    find /home /tmp /var /root -type f \( -name "*.bak" -o -name "*.old" -o -name "*.tmp" -o -name "core.*" \) -print
-
     declare -A dirs_retention
     dirs_retention=(
         ["/var/cache/apt/archives"]=0
