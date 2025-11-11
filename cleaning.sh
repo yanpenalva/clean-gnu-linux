@@ -408,7 +408,7 @@ clean_old_kernels() {
                 for kernel in $installed_kernels; do
                     echo "Removing old kernel: $kernel"
                     if [[ $VERBOSE -eq 1 ]]; then
-                        apt purge -y "$kernel"
+                    apt purge -y "$kernel" || apt --fix-broken install -y
                     else
                         apt purge -y "$kernel" &>/dev/null &
                         show_spinner $!
