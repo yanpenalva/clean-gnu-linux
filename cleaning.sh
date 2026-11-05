@@ -206,6 +206,7 @@ print_help() {
 }
 
 # Parse command line arguments
+ORIGINAL_ARGS=("$@")
 while [[ "$#" -gt 0 ]]; do
     case $1 in
     --dry-run) DRY_RUN=1 ;;
@@ -231,8 +232,12 @@ done
 
 # Root privilege check (unless --help was called)
 if [[ $EUID -ne 0 ]]; then
-    echo -e "${COLOR_RED}This script must be run as root (or with sudo).${COLOR_RESET}" >&2
-    exit 1
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo -e "${COLOR_RED}sudo was not found; run this script as root.${COLOR_RESET}" >&2
+        exit 1
+    fi
+
+    exec sudo -- "$0" "${ORIGINAL_ARGS[@]}"
 fi
 
 update_system() {

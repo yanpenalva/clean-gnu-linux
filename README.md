@@ -66,15 +66,23 @@ Clean GNU/Linux is an automated maintenance and cleanup script tailored for Debi
     cd clean-gnu-linux
     ```
 
-2. **Make the script executable:**
+2. **Add the command to your user's `PATH`:**
 
     ```bash
-    chmod +x cleaning.sh
+    mkdir -p ~/.local/bin
+    ln -s "$(pwd)/cleaning.sh" ~/.local/bin/cleaner
     ```
 
-3. **Run the script:**
+   The command follows the script in this checkout. For a system-wide installation (all users):
+
     ```bash
-    sudo ./cleaning.sh [options]
+    sudo install -m 0755 cleaning.sh /usr/local/bin/cleaner
+    ```
+
+3. **Run the command** (it requests `sudo` automatically when needed):
+
+    ```bash
+    cleaner [options]
     ```
 
 ---
@@ -105,7 +113,7 @@ Clean GNU/Linux is an automated maintenance and cleanup script tailored for Debi
 Preview everything that will be cleaned, with estimated file counts and sizes:
 
 ```bash
-sudo ./cleaning.sh --dry-run
+cleaner --dry-run
 ```
 
 ### 2. Routine Maintenance (Caches Only, No System Upgrade)
@@ -113,7 +121,7 @@ sudo ./cleaning.sh --dry-run
 Perform complete disk cleanup while keeping existing package versions unchanged:
 
 ```bash
-sudo ./cleaning.sh --skip-upgrade
+cleaner --skip-upgrade
 ```
 
 ### 3. Deep Docker Cleanup (Including Unused Volumes)
@@ -121,7 +129,7 @@ sudo ./cleaning.sh --skip-upgrade
 Clean system and reclaim space from unused Docker containers, images, and volumes:
 
 ```bash
-sudo ./cleaning.sh --docker-volumes --docker-all
+cleaner --docker-volumes --docker-all
 ```
 
 ### 4. Server Maintenance (System Only, Keep User Caches)
@@ -129,7 +137,7 @@ sudo ./cleaning.sh --docker-volumes --docker-all
 Clean system packages, logs, and journals without touching `/home/*`:
 
 ```bash
-sudo ./cleaning.sh --skip-user-cache
+cleaner --skip-user-cache
 ```
 
 ---
@@ -157,7 +165,7 @@ To run the cleanup script quietly every Sunday at 03:00 AM without running packa
     ```
 2. Add the following entry:
     ```cron
-    0 3 * * 0 /usr/local/bin/cleaning.sh --quiet --skip-upgrade >> /var/log/system_cleaner_cron.log 2>&1
+    0 3 * * 0 /usr/local/bin/cleaner --quiet --skip-upgrade >> /var/log/system_cleaner_cron.log 2>&1
     ```
 
 ### Option B: Systemd Timer
@@ -171,7 +179,7 @@ To run the cleanup script quietly every Sunday at 03:00 AM without running packa
 
     [Service]
     Type=oneshot
-    ExecStart=/usr/local/bin/cleaning.sh --quiet --skip-upgrade
+    ExecStart=/usr/local/bin/cleaner --quiet --skip-upgrade
     ```
 
 2. Create a timer file `/etc/systemd/system/clean-gnu-linux.timer`:
