@@ -10,6 +10,7 @@ Clean GNU/Linux is an automated maintenance and cleanup script tailored for Debi
 - [🚀 Getting Started](#-getting-started)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
+  - [Inotify limits (optional)](#inotify-limits-optional)
 - [📖 CLI Options Reference](#-cli-options-reference)
 - [💡 Usage Examples](#-usage-examples)
   - [1. Safe Dry-Run Simulation](#1-safe-dry-run-simulation)
@@ -88,6 +89,11 @@ Clean GNU/Linux is an automated maintenance and cleanup script tailored for Debi
     ```
 
 ---
+
+### Inotify limits (optional)
+
+If you encounter `Failed to allocate directory watch: Too many open files`, run `sudo ./scripts/fix-inotify-limits.sh`.
+It writes `fs.inotify.max_user_instances = 512` and `fs.inotify.max_user_watches = 262144` to `/etc/sysctl.d/60-inotify.conf` and applies them immediately for all users; `cleaning.sh` never runs it.
 
 ## 📖 CLI Options Reference
 
