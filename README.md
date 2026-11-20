@@ -40,10 +40,12 @@ Clean GNU/Linux is an automated maintenance and cleanup script tailored for Debi
 - **User & Browser Cache Optimization**:
     - Safely clears temporary cache files (`~/.cache`, browser render/disk caches for Chrome, Chromium, Firefox, Brave, Edge).
     - **Preserves browser session logins, cookies (`cookies.sqlite`), and bookmarks**.
-    - Empties user trash directories (`~/.local/share/Trash`).
+    - Leaves user trash directories (`~/.local/share/Trash`) untouched; empty them explicitly yourself.
+    - Deletes eligible regular files individually by age, preserves excluded subtrees and symlinks, then removes only empty directories.
+    - Does not directly clean `/var/log` or `/var/backups`. Journal vacuuming and the script's own log rotation remain separate operations.
     - Easily skipped via `--skip-user-cache`.
 - **Accurate Dry-Run Mode**:
-    - Preview exactly what files, directories, kernels, and resources would be cleaned without modifying your system.
+    - Counts matching regular files and previews package/resource actions without filesystem writes, including log appends or rotation. Directory sizes are estimates, not predicted reclaimed space.
 - **Automation Ready (Cron & Systemd)**:
     - Quiet mode (`--quiet`) and TTY auto-detection to suppress ANSI escape sequences and spinner animations in non-interactive pipelines.
 
@@ -93,7 +95,7 @@ Clean GNU/Linux is an automated maintenance and cleanup script tailored for Debi
 | :------------------ | :------------------------------------------------------------------------------ | :-----: |
 | `--dry-run`         | Simulates all actions and prints affected items without making any changes.     |   Off   |
 | `--skip-upgrade`    | Skips system package updates (`apt update`, `apt upgrade`, `apt full-upgrade`). |   Off   |
-| `--skip-user-cache` | Skips cleaning user home directories (`~/.cache`, browser caches, trash).       |   Off   |
+| `--skip-user-cache` | Skips cleaning user home directories (`~/.cache`, browser caches).              |   Off   |
 | `--skip-kernels`    | Skips detection and removal of obsolete kernel packages.                        |   Off   |
 | `--skip-docker`     | Skips all Docker cleanup routines.                                              |   Off   |
 | `--skip-journal`    | Skips systemd journal vacuuming.                                                |   Off   |
@@ -103,6 +105,8 @@ Clean GNU/Linux is an automated maintenance and cleanup script tailored for Debi
 | `--quiet`           | Suppresses all console output except fatal errors (recommended for cron).       |   Off   |
 | `--backup-logs`     | Archives old log files instead of truncating them when rotating.                |   Off   |
 | `--help`            | Displays the help message with usage guidelines.                                |    -    |
+
+`--skip-kernels` skips only manual kernel purging; APT `autoremove` during system updates may still remove obsolete kernels.
 
 ---
 
@@ -134,7 +138,7 @@ cleaner --docker-volumes --docker-all
 
 ### 4. Server Maintenance (System Only, Keep User Caches)
 
-Clean system packages, logs, and journals without touching `/home/*`:
+Clean system packages, temporary files, and journals without touching `/home/*`:
 
 ```bash
 cleaner --skip-user-cache
@@ -150,6 +154,8 @@ All operations and errors are logged with timestamps and user credentials:
 - **Error log**: `/var/log/system_cleaner_errors.log`
 
 Logs automatically rotate when they exceed 100MB. Use `--backup-logs` if you want rotated logs preserved as `.old` archives instead of being truncated.
+
+Failed cleanup commands are counted and cause a nonzero exit status instead of a success message. A failure summary is written to the error log. Dry-run never appends or rotates logs.
 
 ---
 

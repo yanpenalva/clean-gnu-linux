@@ -12,7 +12,6 @@ VERSION="1.2.0"
 # Configuration defaults
 LOG_FILE="/var/log/system_cleaner.log"
 ERROR_LOG="/var/log/system_cleaner_errors.log"
-SLEEP_TIME=1
 MAX_LOG_SIZE=100
 BACKUP_LOGS=0
 
@@ -27,6 +26,7 @@ SKIP_DOCKER=0
 SKIP_JOURNAL=0
 DOCKER_VOLUMES=0
 DOCKER_ALL=0
+FAILURES=0
 
 # Interactive / TTY detection
 IS_TTY=0
@@ -54,7 +54,9 @@ log_message() {
     timestamp=$(date "+%Y-%m-%d %H:%M:%S")
     local user_info
     user_info=$(whoami 2>/dev/null || echo "root")
-    echo "----------[ ${user_info} ${timestamp} ]---------- $1" >>"${LOG_FILE}" 2>/dev/null || true
+    if [[ $DRY_RUN -eq 0 ]]; then
+        echo "----------[ ${user_info} ${timestamp} ]---------- $1" >>"${LOG_FILE}" 2>/dev/null || true
+    fi
     if [[ $QUIET -eq 0 && $VERBOSE -eq 1 ]]; then
         echo -e "$1"
     fi
@@ -63,7 +65,9 @@ log_message() {
 error_message() {
     local timestamp
     timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-    echo "ERROR [${timestamp}]: $1" >>"${ERROR_LOG}" 2>/dev/null || true
+    if [[ $DRY_RUN -eq 0 ]]; then
+        echo "ERROR [${timestamp}]: $1" >>"${ERROR_LOG}" 2>/dev/null || true
+    fi
     if [[ $QUIET -eq 0 ]]; then
         echo -e "${COLOR_RED}ERROR: $1${COLOR_RESET}" >&2
     fi
@@ -76,6 +80,7 @@ info_message() {
 }
 
 rotate_logs() {
+    [[ $DRY_RUN -eq 1 ]] && return 0
     for logfile in "${LOG_FILE}" "${ERROR_LOG}"; do
         if [[ -f "$logfile" ]]; then
             local size
@@ -84,7 +89,7 @@ rotate_logs() {
                 if [[ $BACKUP_LOGS -eq 1 ]]; then
                     mv "$logfile" "${logfile}.$(date +%Y%m%d%H%M%S).old"
                 else
-                    >"$logfile"
+                    : >"$logfile"
                     log_message "Log file $logfile rotated (truncated)"
                 fi
             fi
@@ -99,12 +104,12 @@ check_command() {
 show_spinner() {
     local pid=$1
     if [[ $QUIET -eq 1 || $IS_TTY -eq 0 ]]; then
-        wait "$pid" 2>/dev/null || true
-        return 0
+        wait "$pid"
+        return $?
     fi
 
     local delay=0.1
-    local spinstr='|/-\'
+    local spinstr="|/-\\"
     echo -n "Processing "
     while kill -0 "$pid" 2>/dev/null; do
         local temp=${spinstr#?}
@@ -113,7 +118,10 @@ show_spinner() {
         sleep $delay
         printf "\b\b\b\b\b\b"
     done
-    echo "Done!"
+    local status=0
+    wait "$pid" || status=$?
+    echo "Finished (status: $status)"
+    return "$status"
 }
 
 clean_directory() {
@@ -121,62 +129,35 @@ clean_directory() {
     local days=${2:-0}
     local exclude=${3:-""}
 
-    # Resolve glob expansion for passed target path
-    local -a expanded_dirs=()
-    shopt -s nullglob
-    # shellcheck disable=SC2206
-    expanded_dirs=($target_path)
-    shopt -u nullglob
+    [[ -d "$target_path" && ! -L "${target_path%/}" ]] || return 0
 
-    if [[ ${#expanded_dirs[@]} -eq 0 ]]; then
-        if [[ -d "$target_path" ]]; then
-            expanded_dirs=("$target_path")
-        else
-            return 0
-        fi
+    local -a find_args=("$target_path" "-mindepth" "1")
+    local -a directory_args=("$target_path" "-mindepth" "1" "-depth" "-type" "d")
+    local -a patterns=()
+    local pattern
+    IFS=',' read -r -a patterns <<<"$exclude"
+    for pattern in "${patterns[@]}"; do
+        find_args+=("(" "-name" "$pattern" "-o" "-path" "*/$pattern" ")" "-prune" "-o")
+        directory_args+=("!" "-name" "$pattern" "!" "-path" "*/$pattern" "!" "-path" "*/$pattern/*")
+    done
+    find_args+=("-type" "f")
+    if [[ $days -gt 0 ]]; then
+        find_args+=("-mtime" "+$days")
     fi
 
-    for dir in "${expanded_dirs[@]}"; do
-        if [[ ! -d "$dir" ]]; then
-            continue
-        fi
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        local matches file_count dir_size
+        matches=$(find "${find_args[@]}" -printf '.' 2>/dev/null) || FAILURES=$((FAILURES+1))
+        file_count=${#matches}
+        dir_size=$(du -sh "$target_path" 2>/dev/null | cut -f1)
+        info_message "${COLOR_YELLOW}[Dry-run]${COLOR_RESET} Would clean $file_count files in $target_path (retention: ${days}d; directory size estimate, not reclaimed space: ${dir_size:-0})"
+        return 0
+    fi
 
-        local -a find_args=("$dir" "-mindepth" "1")
-        if [[ $days -gt 0 ]]; then
-            find_args+=("-mtime" "+$days")
-        fi
-
-        if [[ -n "$exclude" ]]; then
-            local IFS=','
-            for pattern in $exclude; do
-                find_args+=("!" "-name" "$pattern")
-            done
-            unset IFS
-        fi
-
-        if [[ "$DRY_RUN" -eq 1 ]]; then
-            local file_count
-            file_count=$(find "${find_args[@]}" 2>/dev/null | wc -l)
-            local dir_size
-            dir_size=$(du -sh "$dir" 2>/dev/null | cut -f1)
-            if [[ $days -gt 0 ]]; then
-                info_message "${COLOR_YELLOW}[Dry-run]${COLOR_RESET} Would clean items older than $days days in $dir ($file_count items matched, dir size: ${dir_size:-0})"
-            else
-                info_message "${COLOR_YELLOW}[Dry-run]${COLOR_RESET} Would clean all items in $dir ($file_count items matched, dir size: ${dir_size:-0})"
-            fi
-        else
-            local before_size
-            before_size=$(du -sh "$dir" 2>/dev/null | cut -f1)
-            log_message "Cleaning $dir (retention: ${days}d, size before: ${before_size})..."
-
-            # Execute deletion safely and efficiently
-            find "${find_args[@]}" -depth -exec rm -rf -- {} + 2>/dev/null || true
-
-            local after_size
-            after_size=$(du -sh "$dir" 2>/dev/null | cut -f1)
-            log_message "Directory $dir cleaned: Before=$before_size, After=$after_size"
-        fi
-    done
+    log_message "Cleaning $target_path (retention: ${days}d)..."
+    find "${find_args[@]}" -exec rm -f -- {} + || FAILURES=$((FAILURES+1))
+    find "${directory_args[@]}" -empty -delete || FAILURES=$((FAILURES+1))
+    log_message "Directory $target_path cleanup finished"
 }
 
 print_help() {
@@ -186,7 +167,7 @@ print_help() {
     echo "Options:"
     echo "  --dry-run           Simulate actions without making changes"
     echo "  --skip-upgrade      Skip system package updates and upgrades (apt update/upgrade)"
-    echo "  --skip-user-cache   Skip cleaning user directories (~/.cache, trash, browser caches)"
+    echo "  --skip-user-cache   Skip cleaning user directories (~/.cache, browser caches)"
     echo "  --skip-kernels      Skip old kernel cleanup"
     echo "  --skip-docker       Skip Docker cleanup"
     echo "  --skip-journal      Skip systemd journal cleanup"
@@ -260,7 +241,7 @@ update_system() {
 
     local tries=0
     while ! apt-get update -qq; do
-        ((tries++))
+        ((++tries))
         if [[ $tries -ge 5 ]]; then
             error_message "APT package database locked or network unavailable. Skipping update."
             return 1
@@ -271,34 +252,34 @@ update_system() {
 
     info_message "Upgrading packages..."
     if [[ $VERBOSE -eq 1 ]]; then
-        DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+        DEBIAN_FRONTEND=noninteractive apt-get upgrade -y || FAILURES=$((FAILURES+1))
     else
         DEBIAN_FRONTEND=noninteractive apt-get upgrade -y &>/dev/null &
-        show_spinner $!
+        show_spinner $! || FAILURES=$((FAILURES+1))
     fi
 
     info_message "Performing full upgrade..."
     if [[ $VERBOSE -eq 1 ]]; then
-        DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y
+        DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y || FAILURES=$((FAILURES+1))
     else
         DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y &>/dev/null &
-        show_spinner $!
+        show_spinner $! || FAILURES=$((FAILURES+1))
     fi
 
     info_message "Removing unused packages..."
     if [[ $VERBOSE -eq 1 ]]; then
-        DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y
+        DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y || FAILURES=$((FAILURES+1))
     else
         DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y &>/dev/null &
-        show_spinner $!
+        show_spinner $! || FAILURES=$((FAILURES+1))
     fi
 
     info_message "Cleaning APT cache..."
     if [[ $VERBOSE -eq 1 ]]; then
-        apt-get autoclean -y
+        apt-get autoclean -y || FAILURES=$((FAILURES+1))
     else
         apt-get autoclean -y &>/dev/null &
-        show_spinner $!
+        show_spinner $! || FAILURES=$((FAILURES+1))
     fi
 }
 
@@ -311,10 +292,10 @@ perform_package_cleanup() {
         else
             info_message "Cleaning APT package cache..."
             if [[ $VERBOSE -eq 1 ]]; then
-                apt-get clean -y
+                apt-get clean -y || FAILURES=$((FAILURES+1))
             else
                 apt-get clean -y &>/dev/null &
-                show_spinner $!
+                show_spinner $! || FAILURES=$((FAILURES+1))
             fi
         fi
     fi
@@ -325,10 +306,10 @@ perform_package_cleanup() {
         else
             info_message "Cleaning Flatpak unused runtimes and packages..."
             if [[ $VERBOSE -eq 1 ]]; then
-                flatpak uninstall --unused -y 2>/dev/null || true
+                flatpak uninstall --unused -y 2>/dev/null || FAILURES=$((FAILURES+1))
             else
                 flatpak uninstall --unused -y &>/dev/null &
-                show_spinner $!
+                show_spinner $! || FAILURES=$((FAILURES+1))
             fi
         fi
     fi
@@ -338,14 +319,14 @@ perform_package_cleanup() {
             info_message "${COLOR_YELLOW}[Dry-run]${COLOR_RESET} Would clean disabled Snap package revisions and retain settings"
         else
             info_message "Cleaning disabled Snap revisions..."
-            snap set system refresh.retain=2 2>/dev/null || true
+            snap set system refresh.retain=2 2>/dev/null || FAILURES=$((FAILURES+1))
             local disabled_snaps
-            disabled_snaps=$(snap list --all 2>/dev/null | awk '/disabled/{print $1, $3}') || true
+            disabled_snaps=$(set -o pipefail; snap list --all 2>/dev/null | awk '/disabled/{print $1, $3}') || FAILURES=$((FAILURES+1))
             if [[ -n "$disabled_snaps" ]]; then
                 while read -r snapname revision; do
                     [[ -z "$snapname" || -z "$revision" ]] && continue
                     info_message "Removing disabled snap: $snapname (revision $revision)"
-                    snap remove "$snapname" --revision="$revision" 2>/dev/null || true
+                    snap remove "$snapname" --revision="$revision" 2>/dev/null || FAILURES=$((FAILURES+1))
                 done <<<"$disabled_snaps"
             fi
         fi
@@ -361,12 +342,9 @@ perform_cleanup() {
     clean_directory "/root/.composer/cache" 30
     clean_directory "/root/.cache" 30
 
-    # Clean system temporary and logging directories
-    clean_directory "/var/cache/apt/archives" 0
+    # Clean system temporary directories
     clean_directory "/var/tmp" 7
-    clean_directory "/var/log" 30 "*.gz,*.old"
     clean_directory "/var/crash" 0
-    clean_directory "/var/backups" 30
     clean_directory "/tmp" 2
 
     # User directory cleanup
@@ -382,10 +360,9 @@ perform_cleanup() {
             clean_directory "$user_home/.npm" 30
             clean_directory "$user_home/.composer/cache" 30
 
-            # General caches and trash
+            # General caches
             clean_directory "$user_home/.cache/thumbnails" 0
             clean_directory "$user_home/.thumbnails" 30
-            clean_directory "$user_home/.local/share/Trash" 0
             clean_directory "$user_home/.cache" 30
         fi
     done
@@ -450,14 +427,14 @@ clean_journal() {
         info_message "Vacuuming systemd journal..."
         if [[ $VERBOSE -eq 1 ]]; then
             info_message "Journal size before cleanup:"
-            journalctl --disk-usage 2>/dev/null || true
-            journalctl --vacuum-time=14d 2>/dev/null || true
-            journalctl --vacuum-size=500M 2>/dev/null || true
+            journalctl --disk-usage 2>/dev/null || FAILURES=$((FAILURES+1))
+            journalctl --vacuum-time=14d 2>/dev/null || FAILURES=$((FAILURES+1))
+            journalctl --vacuum-size=500M 2>/dev/null || FAILURES=$((FAILURES+1))
             info_message "Journal size after cleanup:"
-            journalctl --disk-usage 2>/dev/null || true
+            journalctl --disk-usage 2>/dev/null || FAILURES=$((FAILURES+1))
         else
-            journalctl --vacuum-time=14d &>/dev/null || true
-            journalctl --vacuum-size=500M &>/dev/null || true
+            journalctl --vacuum-time=14d &>/dev/null || FAILURES=$((FAILURES+1))
+            journalctl --vacuum-size=500M &>/dev/null || FAILURES=$((FAILURES+1))
         fi
     fi
 }
@@ -493,7 +470,7 @@ clean_old_kernels() {
     local kernels_to_remove=""
     for pkg in $installed_images; do
         # Always protect currently running kernel
-        if [[ "$pkg" == *"$running_kernel"* ]]; then
+        if [[ "${pkg%%:*}" == "linux-image-$running_kernel" ]]; then
             continue
         fi
         # Always protect the newest installed kernel image (preserves bootable kernel after upgrade without reboot)
@@ -519,11 +496,11 @@ clean_old_kernels() {
 
         # shellcheck disable=SC2086
         if [[ $VERBOSE -eq 1 ]]; then
-            DEBIAN_FRONTEND=noninteractive apt-get purge -y $kernels_to_remove || apt-get --fix-broken install -y
-            DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y
+            DEBIAN_FRONTEND=noninteractive apt-get purge -y $kernels_to_remove || { FAILURES=$((FAILURES+1)); apt-get --fix-broken install -y || FAILURES=$((FAILURES+1)); }
+            DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y || FAILURES=$((FAILURES+1))
         else
-            DEBIAN_FRONTEND=noninteractive apt-get purge -y $kernels_to_remove &>/dev/null || true
-            DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y &>/dev/null || true
+            DEBIAN_FRONTEND=noninteractive apt-get purge -y $kernels_to_remove &>/dev/null || FAILURES=$((FAILURES+1))
+            DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y &>/dev/null || FAILURES=$((FAILURES+1))
         fi
     fi
 }
@@ -560,31 +537,31 @@ clean_docker() {
 
     if [[ $VERBOSE -eq 1 ]]; then
         info_message "Docker disk usage before cleanup:"
-        docker system df 2>/dev/null || true
+        docker system df 2>/dev/null || FAILURES=$((FAILURES+1))
     fi
 
     # Standard safe cleanup
-    docker container prune -f >/dev/null 2>&1 || true
-    docker network prune -f >/dev/null 2>&1 || true
+    docker container prune -f >/dev/null 2>&1 || FAILURES=$((FAILURES+1))
+    docker network prune -f >/dev/null 2>&1 || FAILURES=$((FAILURES+1))
 
     if [[ $DOCKER_ALL -eq 1 ]]; then
         info_message "Pruning all unused Docker images (--docker-all)..."
-        docker image prune -a -f >/dev/null 2>&1 || true
+        docker image prune -a -f >/dev/null 2>&1 || FAILURES=$((FAILURES+1))
     else
         info_message "Pruning dangling Docker images..."
-        docker image prune -f >/dev/null 2>&1 || true
+        docker image prune -f >/dev/null 2>&1 || FAILURES=$((FAILURES+1))
     fi
 
-    docker builder prune -f >/dev/null 2>&1 || true
+    docker builder prune -f >/dev/null 2>&1 || FAILURES=$((FAILURES+1))
 
     if [[ $DOCKER_VOLUMES -eq 1 ]]; then
         info_message "${COLOR_YELLOW}Pruning unused Docker volumes (--docker-volumes)...${COLOR_RESET}"
-        docker volume prune -f >/dev/null 2>&1 || true
+        docker volume prune -f >/dev/null 2>&1 || FAILURES=$((FAILURES+1))
     fi
 
     if [[ $VERBOSE -eq 1 ]]; then
         info_message "Docker disk usage after cleanup:"
-        docker system df 2>/dev/null || true
+        docker system df 2>/dev/null || FAILURES=$((FAILURES+1))
     fi
 }
 
@@ -606,13 +583,18 @@ main() {
 
     info_message "${COLOR_GREEN}Clean GNU/Linux v${VERSION} starting...${COLOR_RESET}"
 
-    update_system
+    update_system || FAILURES=$((FAILURES+1))
     perform_package_cleanup
     perform_cleanup
     clean_browser_cache
     clean_journal
     clean_old_kernels
     clean_docker
+
+    if [[ $FAILURES -gt 0 ]]; then
+        error_message "Cleanup completed with $FAILURES failed operation(s)."
+        exit 1
+    fi
 
     if [[ "$DRY_RUN" -eq 1 ]]; then
         info_message "${COLOR_YELLOW}Dry-run completed. No changes were made.${COLOR_RESET}"
