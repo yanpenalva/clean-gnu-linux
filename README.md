@@ -32,6 +32,7 @@ Clean GNU/Linux is an automated maintenance and cleanup script tailored for Debi
     - Updates and upgrades packages (`apt update`, `apt upgrade`, `apt full-upgrade`, `autoremove`, `autoclean`).
     - Can be easily bypassed with `--skip-upgrade` for quick cache-only cleanups.
     - Detects package managers without forcefully installing missing tools.
+    - Uses `apt`'s maintained `autoremove` for orphaned dependencies; no `deborphan` dependency (retired in Debian 13).
     - Cleans Flatpak unused runtimes/packages and disabled Snap revisions automatically when present.
 - **Kernel Boot Protection**:
     - Automatically identifies obsolete Linux kernel packages while **strictly protecting both the running kernel and the newest installed kernel**. This avoids removing the newly installed kernel before rebooting.
